@@ -453,6 +453,8 @@ void test_sub1() {
   std::cin >> str;
 }
 
+std::atomic<uint64_t> g_count{0};
+
 void test_multiple_thread() {
   std::vector<std::shared_ptr<rpc_client>> cls;
   std::vector<std::shared_ptr<std::thread>> v;
@@ -463,7 +465,6 @@ void test_multiple_thread() {
     if (!r) {
       return;
     }
-
     for (size_t i = 0; i < 2; i++) {
       person p{1, "tom", 20};
       v.emplace_back(std::make_shared<std::thread>([client] {
@@ -473,30 +474,21 @@ void test_multiple_thread() {
               "get_name",
               [](const asio::error_code &ec, std::string data) {
                 if (ec) {
-                  std::cout << ec.message() << '\n';
+                  std::cout << pthread_self() << " error: " << ec.message() << '\n';
                 }
+
+                g_count++;
               },
               p);
-
-          // auto future = client->async_call<FUTURE>("get_name", p);
-          // auto status = future.wait_for(std::chrono::seconds(2));
-          // if (status == std::future_status::deferred) {
-          //	std::cout << "deferred\n";
-          //}
-          // else if (status == std::future_status::timeout) {
-          //	std::cout << "timeout\n";
-          //}
-          // else if (status == std::future_status::ready) {
-          //}
-
-          // client->call<std::string>("get_name", p);
         }
       }));
     }
   }
-
-  std::string str;
-  std::cin >> str;
+  for (auto &p : v) {
+    p->join();
+  }
+  cls.clear();
+  std::cout << "g_count: " << g_count.load() << '\n';
 }
 
 void test_threads() {
@@ -633,19 +625,21 @@ void benchmark_test() {
 
 int main() {
   // benchmark_test();
-  test_connect();
-  test_callback();
+  // test_connect();
+  // test_callback();
   test_echo();
-  test_sync_client();
-  test_async_client();
-  test_threads();
-  test_sub1();
-  test_call_with_timeout();
-  test_connect();
-  test_upload();
-  test_download();
-  multi_client_performance(20);
-  test_performance1();
-  test_multiple_thread();
+  // test_sync_client();
+  // test_async_client();
+  // test_threads();
+  // test_sub1();
+  // test_call_with_timeout();
+  // test_connect();
+  // test_upload();
+  // test_download();
+  // multi_client_performance(20);
+  // test_performance1();
+  // std::cout << "test test_multiple_thread start\n";
+  // test_multiple_thread();
+  // std::cout << "test test_multiple_thread end\n";
   return 0;
 }

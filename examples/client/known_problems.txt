@@ -1,0 +1,4 @@
+1. If one of the rpc callbacks stuck indefinitely, server side will become unresponsive to normal keyboard terminating signals like Ctrl+C/Ctrl+D, 
+ it will also not close the socket even if client has exited leaving the socket to CLOSE_WAIT/FIN_WAIT2 state
+2. The client side may crash if the client object is destructed with unfinished rpc callbacks
+3. 

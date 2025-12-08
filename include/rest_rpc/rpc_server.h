@@ -51,6 +51,7 @@ public:
   }
 
   ~rpc_server() { stop(); }
+  unsigned short bound_port() const { return acceptor_.local_endpoint().port(); }
 
   std::error_code async_run() {
     auto ec = listen();
