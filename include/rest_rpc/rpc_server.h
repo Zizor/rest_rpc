@@ -20,17 +20,10 @@ public:
              size_t check_seconds = 10)
       : io_service_pool_(size), acceptor_(io_service_pool_.get_io_service()),
         timeout_seconds_(timeout_seconds), check_seconds_(check_seconds),
-        signals_(io_service_pool_.get_io_service()),
         port_(std::to_string(port)) {
     check_thread_ = std::make_shared<std::thread>([this] { clean(); });
     pub_sub_thread_ =
         std::make_shared<std::thread>([this] { clean_sub_pub(); });
-    signals_.add(SIGINT);
-    signals_.add(SIGTERM);
-#if defined(SIGQUIT)
-    signals_.add(SIGQUIT);
-#endif // defined(SIGQUIT)
-    do_await_stop();
   }
 
   rpc_server(std::string address, unsigned short port, size_t size,
@@ -98,6 +91,11 @@ public:
     on_net_err_callback_ = std::move(on_net_err);
   }
 
+  void set_on_connected_callback(
+      std::function<void(std::shared_ptr<connection>)> on_connected) {
+    on_connected_callback_ = std::move(on_connected);
+  }
+
   template <typename T> void publish(const std::string &key, T data) {
     publish(key, "", std::move(data));
   }
@@ -146,6 +144,9 @@ private:
         std::unique_lock<std::mutex> lock(mtx_);
         conn_->set_conn_id(conn_id_);
         connections_.emplace(conn_id_++, conn_);
+        if (on_connected_callback_) {
+          on_connected_callback_(conn_);
+        }
       }
 
       do_accept();
@@ -286,11 +287,6 @@ private:
     return std::make_shared<std::string>(buf.data(), buf.size());
   }
 
-  void do_await_stop() {
-    signals_.async_wait(
-        [this](std::error_code /*ec*/, int /*signo*/) { stop(); });
-  }
-
   void stop() {
     if (has_stoped_) {
       return;
@@ -331,9 +327,11 @@ private:
   std::shared_ptr<std::thread> check_thread_;
   size_t check_seconds_;
   bool stop_check_ = false;
+
+  std::function<void(std::shared_ptr<connection>)> on_connected_callback_ = nullptr;
   std::condition_variable cv_;
 
-  asio::signal_set signals_;
+  // asio::signal_set signals_;
 
   std::function<void(asio::error_code, string_view)> err_cb_;
   std::function<void(int64_t)> conn_timeout_callback_;

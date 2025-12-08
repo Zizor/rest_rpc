@@ -41,6 +41,25 @@ public:
 
   tcp::socket &socket() { return socket_; }
 
+  void close(bool close_ssl = true) {
+#ifdef CINATRA_ENABLE_SSL
+    if (close_ssl && ssl_stream_) {
+      asio::error_code ec;
+      ssl_stream_->shutdown(ec);
+      ssl_stream_ = nullptr;
+    }
+#endif
+    if (has_closed_) {
+      return;
+    }
+
+    asio::error_code ignored_ec;
+    socket_.shutdown(tcp::socket::shutdown_both, ignored_ec);
+    socket_.close(ignored_ec);
+    has_closed_ = true;
+    has_shake_ = false;
+  }
+
   bool has_closed() const { return has_closed_; }
   uint64_t request_id() const { return req_id_; }
 
@@ -380,24 +399,7 @@ private:
     timer_.cancel();
   }
 
-  void close(bool close_ssl = true) {
-#ifdef CINATRA_ENABLE_SSL
-    if (close_ssl && ssl_stream_) {
-      asio::error_code ec;
-      ssl_stream_->shutdown(ec);
-      ssl_stream_ = nullptr;
-    }
-#endif
-    if (has_closed_) {
-      return;
-    }
 
-    asio::error_code ignored_ec;
-    socket_.shutdown(tcp::socket::shutdown_both, ignored_ec);
-    socket_.close(ignored_ec);
-    has_closed_ = true;
-    has_shake_ = false;
-  }
 
   template <typename... Args> void print(Args... args) {
 #ifdef _DEBUG
