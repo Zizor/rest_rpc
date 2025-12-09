@@ -2,7 +2,7 @@
 // detail/resolver_service.hpp
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
-// Copyright (c) 2003-2025 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+// Copyright (c) 2003-2021 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -21,6 +21,7 @@
 
 #include "asio/ip/basic_resolver_query.hpp"
 #include "asio/ip/basic_resolver_results.hpp"
+#include "asio/detail/concurrency_hint.hpp"
 #include "asio/detail/memory.hpp"
 #include "asio/detail/resolve_endpoint_op.hpp"
 #include "asio/detail/resolve_query_op.hpp"
@@ -33,7 +34,7 @@ namespace detail {
 
 template <typename Protocol>
 class resolver_service :
-  public execution_context_service_base<resolver_service<Protocol>>,
+  public execution_context_service_base<resolver_service<Protocol> >,
   public resolver_service_base
 {
 public:
@@ -52,7 +53,7 @@ public:
 
   // Constructor.
   resolver_service(execution_context& context)
-    : execution_context_service_base<resolver_service<Protocol>>(context),
+    : execution_context_service_base<resolver_service<Protocol> >(context),
       resolver_service_base(context)
   {
   }
@@ -60,6 +61,13 @@ public:
   // Destroy all user-defined handler objects owned by the service.
   void shutdown()
   {
+    this->base_shutdown();
+  }
+
+  // Perform any fork-related housekeeping.
+  void notify_fork(execution_context::fork_event fork_ev)
+  {
+    this->base_notify_fork(fork_ev);
   }
 
   // Resolve a query to a list of entries.
@@ -72,7 +80,6 @@ public:
         qry.service_name().c_str(), qry.hints(), &address_info, ec);
     auto_addrinfo auto_address_info(address_info);
 
-    ASIO_ERROR_LOCATION(ec);
     return ec ? results_type() : results_type::create(
         address_info, qry.host_name(), qry.service_name());
   }
@@ -86,12 +93,12 @@ public:
     typedef resolve_query_op<Protocol, Handler, IoExecutor> op;
     typename op::ptr p = { asio::detail::addressof(handler),
       op::ptr::allocate(handler), 0 };
-    p.p = new (p.v) op(impl, qry, thread_pool_.scheduler(), handler, io_ex);
+    p.p = new (p.v) op(impl, qry, scheduler_, handler, io_ex);
 
-    ASIO_HANDLER_CREATION((thread_pool_.context(),
+    ASIO_HANDLER_CREATION((scheduler_.context(),
           *p.p, "resolver", &impl, 0, "async_resolve"));
 
-    thread_pool_.start_resolve_op(p.p);
+    start_resolve_op(p.p);
     p.v = p.p = 0;
   }
 
@@ -105,7 +112,6 @@ public:
         host_name, NI_MAXHOST, service_name, NI_MAXSERV,
         endpoint.protocol().type(), ec);
 
-    ASIO_ERROR_LOCATION(ec);
     return ec ? results_type() : results_type::create(
         endpoint, host_name, service_name);
   }
@@ -119,13 +125,12 @@ public:
     typedef resolve_endpoint_op<Protocol, Handler, IoExecutor> op;
     typename op::ptr p = { asio::detail::addressof(handler),
       op::ptr::allocate(handler), 0 };
-    p.p = new (p.v) op(impl, endpoint,
-        thread_pool_.scheduler(), handler, io_ex);
+    p.p = new (p.v) op(impl, endpoint, scheduler_, handler, io_ex);
 
-    ASIO_HANDLER_CREATION((thread_pool_.context(),
+    ASIO_HANDLER_CREATION((scheduler_.context(),
           *p.p, "resolver", &impl, 0, "async_resolve"));
 
-    thread_pool_.start_resolve_op(p.p);
+    start_resolve_op(p.p);
     p.v = p.p = 0;
   }
 };

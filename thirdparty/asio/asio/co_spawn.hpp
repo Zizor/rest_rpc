@@ -2,7 +2,7 @@
 // co_spawn.hpp
 // ~~~~~~~~~~~~
 //
-// Copyright (c) 2003-2025 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+// Copyright (c) 2003-2021 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -54,13 +54,10 @@ struct awaitable_signature<awaitable<void, Executor>>
  * @param a The asio::awaitable object that is the result of calling the
  * coroutine's entry point function.
  *
- * @param token The @ref completion_token that will handle the notification that
+ * @param token The completion token that will handle the notification that
  * the thread of execution has completed. The function signature of the
  * completion handler must be:
  * @code void handler(std::exception_ptr, T); @endcode
- *
- * @par Completion Signature
- * @code void(std::exception_ptr, T) @endcode
  *
  * @par Example
  * @code
@@ -113,10 +110,10 @@ inline ASIO_INITFN_AUTO_RESULT_TYPE(
 co_spawn(const Executor& ex, awaitable<T, AwaitableExecutor> a,
     CompletionToken&& token
       ASIO_DEFAULT_COMPLETION_TOKEN(Executor),
-    constraint_t<
+    typename constraint<
       (is_executor<Executor>::value || execution::is_executor<Executor>::value)
         && is_convertible<Executor, AwaitableExecutor>::value
-    > = 0);
+    >::type = 0);
 
 /// Spawn a new coroutined-based thread of execution.
 /**
@@ -126,13 +123,10 @@ co_spawn(const Executor& ex, awaitable<T, AwaitableExecutor> a,
  * @param a The asio::awaitable object that is the result of calling the
  * coroutine's entry point function.
  *
- * @param token The @ref completion_token that will handle the notification that
+ * @param token The completion token that will handle the notification that
  * the thread of execution has completed. The function signature of the
  * completion handler must be:
  * @code void handler(std::exception_ptr); @endcode
- *
- * @par Completion Signature
- * @code void(std::exception_ptr) @endcode
  *
  * @par Example
  * @code
@@ -177,10 +171,10 @@ inline ASIO_INITFN_AUTO_RESULT_TYPE(
 co_spawn(const Executor& ex, awaitable<void, AwaitableExecutor> a,
     CompletionToken&& token
       ASIO_DEFAULT_COMPLETION_TOKEN(Executor),
-    constraint_t<
+    typename constraint<
       (is_executor<Executor>::value || execution::is_executor<Executor>::value)
         && is_convertible<Executor, AwaitableExecutor>::value
-    > = 0);
+    >::type = 0);
 
 /// Spawn a new coroutined-based thread of execution.
 /**
@@ -190,13 +184,10 @@ co_spawn(const Executor& ex, awaitable<void, AwaitableExecutor> a,
  * @param a The asio::awaitable object that is the result of calling the
  * coroutine's entry point function.
  *
- * @param token The @ref completion_token that will handle the notification that
+ * @param token The completion token that will handle the notification that
  * the thread of execution has completed. The function signature of the
  * completion handler must be:
  * @code void handler(std::exception_ptr); @endcode
- *
- * @par Completion Signature
- * @code void(std::exception_ptr, T) @endcode
  *
  * @par Example
  * @code
@@ -251,11 +242,11 @@ co_spawn(ExecutionContext& ctx, awaitable<T, AwaitableExecutor> a,
     CompletionToken&& token
       ASIO_DEFAULT_COMPLETION_TOKEN(
         typename ExecutionContext::executor_type),
-    constraint_t<
+    typename constraint<
       is_convertible<ExecutionContext&, execution_context&>::value
         && is_convertible<typename ExecutionContext::executor_type,
           AwaitableExecutor>::value
-    > = 0);
+    >::type = 0);
 
 /// Spawn a new coroutined-based thread of execution.
 /**
@@ -265,13 +256,10 @@ co_spawn(ExecutionContext& ctx, awaitable<T, AwaitableExecutor> a,
  * @param a The asio::awaitable object that is the result of calling the
  * coroutine's entry point function.
  *
- * @param token The @ref completion_token that will handle the notification that
+ * @param token The completion token that will handle the notification that
  * the thread of execution has completed. The function signature of the
  * completion handler must be:
  * @code void handler(std::exception_ptr); @endcode
- *
- * @par Completion Signature
- * @code void(std::exception_ptr) @endcode
  *
  * @par Example
  * @code
@@ -318,11 +306,11 @@ co_spawn(ExecutionContext& ctx, awaitable<void, AwaitableExecutor> a,
     CompletionToken&& token
       ASIO_DEFAULT_COMPLETION_TOKEN(
         typename ExecutionContext::executor_type),
-    constraint_t<
+    typename constraint<
       is_convertible<ExecutionContext&, execution_context&>::value
         && is_convertible<typename ExecutionContext::executor_type,
           AwaitableExecutor>::value
-    > = 0);
+    >::type = 0);
 
 /// Spawn a new coroutined-based thread of execution.
 /**
@@ -333,19 +321,13 @@ co_spawn(ExecutionContext& ctx, awaitable<void, AwaitableExecutor> a,
  * @c asio::awaitable<R,E> that will be used as the coroutine's entry
  * point.
  *
- * @param token The @ref completion_token that will handle the notification
- * that the thread of execution has completed. If @c R is @c void, the function
+ * @param token The completion token that will handle the notification that the
+ * thread of execution has completed. If @c R is @c void, the function
  * signature of the completion handler must be:
  *
  * @code void handler(std::exception_ptr); @endcode
  * Otherwise, the function signature of the completion handler must be:
  * @code void handler(std::exception_ptr, R); @endcode
- *
- * @par Completion Signature
- * @code void(std::exception_ptr, R) @endcode
- * where @c R is the first template argument to the @c awaitable returned by the
- * supplied function object @c F:
- * @code asio::awaitable<R, AwaitableExecutor> F() @endcode
  *
  * @par Example
  * @code
@@ -406,16 +388,16 @@ co_spawn(ExecutionContext& ctx, awaitable<void, AwaitableExecutor> a,
  */
 template <typename Executor, typename F,
     ASIO_COMPLETION_TOKEN_FOR(typename detail::awaitable_signature<
-      result_of_t<F()>>::type) CompletionToken
+      typename result_of<F()>::type>::type) CompletionToken
         ASIO_DEFAULT_COMPLETION_TOKEN_TYPE(Executor)>
 ASIO_INITFN_AUTO_RESULT_TYPE(CompletionToken,
-    typename detail::awaitable_signature<result_of_t<F()>>::type)
+    typename detail::awaitable_signature<typename result_of<F()>::type>::type)
 co_spawn(const Executor& ex, F&& f,
     CompletionToken&& token
       ASIO_DEFAULT_COMPLETION_TOKEN(Executor),
-    constraint_t<
+    typename constraint<
       is_executor<Executor>::value || execution::is_executor<Executor>::value
-    > = 0);
+    >::type = 0);
 
 /// Spawn a new coroutined-based thread of execution.
 /**
@@ -426,19 +408,13 @@ co_spawn(const Executor& ex, F&& f,
  * @c asio::awaitable<R,E> that will be used as the coroutine's entry
  * point.
  *
- * @param token The @ref completion_token that will handle the notification
- * that the thread of execution has completed. If @c R is @c void, the function
+ * @param token The completion token that will handle the notification that the
+ * thread of execution has completed. If @c R is @c void, the function
  * signature of the completion handler must be:
  *
  * @code void handler(std::exception_ptr); @endcode
  * Otherwise, the function signature of the completion handler must be:
  * @code void handler(std::exception_ptr, R); @endcode
- *
- * @par Completion Signature
- * @code void(std::exception_ptr, R) @endcode
- * where @c R is the first template argument to the @c awaitable returned by the
- * supplied function object @c F:
- * @code asio::awaitable<R, AwaitableExecutor> F() @endcode
  *
  * @par Example
  * @code
@@ -499,18 +475,18 @@ co_spawn(const Executor& ex, F&& f,
  */
 template <typename ExecutionContext, typename F,
     ASIO_COMPLETION_TOKEN_FOR(typename detail::awaitable_signature<
-      result_of_t<F()>>::type) CompletionToken
+      typename result_of<F()>::type>::type) CompletionToken
         ASIO_DEFAULT_COMPLETION_TOKEN_TYPE(
           typename ExecutionContext::executor_type)>
 ASIO_INITFN_AUTO_RESULT_TYPE(CompletionToken,
-    typename detail::awaitable_signature<result_of_t<F()>>::type)
+    typename detail::awaitable_signature<typename result_of<F()>::type>::type)
 co_spawn(ExecutionContext& ctx, F&& f,
     CompletionToken&& token
       ASIO_DEFAULT_COMPLETION_TOKEN(
         typename ExecutionContext::executor_type),
-    constraint_t<
+    typename constraint<
       is_convertible<ExecutionContext&, execution_context&>::value
-    > = 0);
+    >::type = 0);
 
 } // namespace asio
 

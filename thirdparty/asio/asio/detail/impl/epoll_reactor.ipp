@@ -2,7 +2,7 @@
 // detail/impl/epoll_reactor.ipp
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
-// Copyright (c) 2003-2025 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+// Copyright (c) 2003-2021 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -21,7 +21,6 @@
 
 #include <cstddef>
 #include <sys/epoll.h>
-#include "asio/config.hpp"
 #include "asio/detail/epoll_reactor.hpp"
 #include "asio/detail/scheduler.hpp"
 #include "asio/detail/throw_error.hpp"
@@ -39,19 +38,13 @@ namespace detail {
 epoll_reactor::epoll_reactor(asio::execution_context& ctx)
   : execution_context_service_base<epoll_reactor>(ctx),
     scheduler_(use_service<scheduler>(ctx)),
-    mutex_(config(ctx).get("reactor", "registration_locking", true),
-        config(ctx).get("reactor", "registration_locking_spin_count", 0)),
+    mutex_(ASIO_CONCURRENCY_HINT_IS_LOCKING(
+          REACTOR_REGISTRATION, scheduler_.concurrency_hint())),
     interrupter_(),
     epoll_fd_(do_epoll_create()),
     timer_fd_(do_timerfd_create()),
     shutdown_(false),
-    io_locking_(config(ctx).get("reactor", "io_locking", true)),
-    io_locking_spin_count_(
-        config(ctx).get("reactor", "io_locking_spin_count", 0)),
-    registered_descriptors_mutex_(mutex_.enabled(), mutex_.spin_count()),
-    registered_descriptors_(execution_context::allocator<void>(ctx),
-        config(ctx).get("reactor", "preallocated_io_objects", 0U),
-        io_locking_, io_locking_spin_count_)
+    registered_descriptors_mutex_(mutex_.enabled())
 {
   // Add the interrupter's descriptor to epoll.
   epoll_event ev = { 0, { 0 } };
@@ -137,18 +130,14 @@ void epoll_reactor::notify_fork(
     for (descriptor_state* state = registered_descriptors_.first();
         state != 0; state = state->next_)
     {
-      if (state->registered_events_ != 0)
+      ev.events = state->registered_events_;
+      ev.data.ptr = state;
+      int result = epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, state->descriptor_, &ev);
+      if (result != 0)
       {
-        ev.events = state->registered_events_;
-        ev.data.ptr = state;
-        int result = epoll_ctl(epoll_fd_,
-            EPOLL_CTL_ADD, state->descriptor_, &ev);
-        if (result != 0)
-        {
-          asio::error_code ec(errno,
-              asio::error::get_system_category());
-          asio::detail::throw_error(ec, "epoll re-registration");
-        }
+        asio::error_code ec(errno,
+            asio::error::get_system_category());
+        asio::detail::throw_error(ec, "epoll re-registration");
       }
     }
   }
@@ -227,11 +216,7 @@ int epoll_reactor::register_internal_descriptor(
   ev.data.ptr = descriptor_data;
   int result = epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, descriptor, &ev);
   if (result != 0)
-  {
-    // Don't try to re-register internal descriptor after fork().
-    descriptor_data->registered_events_ = 0;
     return errno;
-  }
 
   return 0;
 }
@@ -244,23 +229,14 @@ void epoll_reactor::move_descriptor(socket_type,
   source_descriptor_data = 0;
 }
 
-void epoll_reactor::call_post_immediate_completion(
-    operation* op, bool is_continuation, const void* self)
-{
-  static_cast<const epoll_reactor*>(self)->post_immediate_completion(
-      op, is_continuation);
-}
-
 void epoll_reactor::start_op(int op_type, socket_type descriptor,
     epoll_reactor::per_descriptor_data& descriptor_data, reactor_op* op,
-    bool is_continuation, bool allow_speculative,
-    void (*on_immediate)(operation*, bool, const void*),
-    const void* immediate_arg)
+    bool is_continuation, bool allow_speculative)
 {
   if (!descriptor_data)
   {
     op->ec_ = asio::error::bad_descriptor;
-    on_immediate(op, is_continuation, immediate_arg);
+    post_immediate_completion(op, is_continuation);
     return;
   }
 
@@ -268,7 +244,7 @@ void epoll_reactor::start_op(int op_type, socket_type descriptor,
 
   if (descriptor_data->shutdown_)
   {
-    on_immediate(op, is_continuation, immediate_arg);
+    post_immediate_completion(op, is_continuation);
     return;
   }
 
@@ -286,7 +262,7 @@ void epoll_reactor::start_op(int op_type, socket_type descriptor,
             if (descriptor_data->registered_events_ != 0)
               descriptor_data->try_speculative_[op_type] = false;
           descriptor_lock.unlock();
-          on_immediate(op, is_continuation, immediate_arg);
+          scheduler_.post_immediate_completion(op, is_continuation);
           return;
         }
       }
@@ -294,7 +270,7 @@ void epoll_reactor::start_op(int op_type, socket_type descriptor,
       if (descriptor_data->registered_events_ == 0)
       {
         op->ec_ = asio::error::operation_not_supported;
-        on_immediate(op, is_continuation, immediate_arg);
+        scheduler_.post_immediate_completion(op, is_continuation);
         return;
       }
 
@@ -313,7 +289,7 @@ void epoll_reactor::start_op(int op_type, socket_type descriptor,
           {
             op->ec_ = asio::error_code(errno,
                 asio::error::get_system_category());
-            on_immediate(op, is_continuation, immediate_arg);
+            scheduler_.post_immediate_completion(op, is_continuation);
             return;
           }
         }
@@ -322,7 +298,7 @@ void epoll_reactor::start_op(int op_type, socket_type descriptor,
     else if (descriptor_data->registered_events_ == 0)
     {
       op->ec_ = asio::error::operation_not_supported;
-      on_immediate(op, is_continuation, immediate_arg);
+      scheduler_.post_immediate_completion(op, is_continuation);
       return;
     }
     else
@@ -678,7 +654,8 @@ int epoll_reactor::do_timerfd_create()
 epoll_reactor::descriptor_state* epoll_reactor::allocate_descriptor_state()
 {
   mutex::scoped_lock descriptors_lock(registered_descriptors_mutex_);
-  return registered_descriptors_.alloc(io_locking_, io_locking_spin_count_);
+  return registered_descriptors_.alloc(ASIO_CONCURRENCY_HINT_IS_LOCKING(
+        REACTOR_IO, scheduler_.concurrency_hint()));
 }
 
 void epoll_reactor::free_descriptor_state(epoll_reactor::descriptor_state* s)
@@ -770,9 +747,9 @@ struct epoll_reactor::perform_io_cleanup_on_block_exit
   operation* first_op_;
 };
 
-epoll_reactor::descriptor_state::descriptor_state(bool locking, int spin_count)
+epoll_reactor::descriptor_state::descriptor_state(bool locking)
   : operation(&epoll_reactor::descriptor_state::do_complete),
-    mutex_(locking, spin_count)
+    mutex_(locking)
 {
 }
 

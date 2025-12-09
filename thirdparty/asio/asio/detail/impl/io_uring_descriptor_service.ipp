@@ -2,7 +2,7 @@
 // detail/impl/io_uring_descriptor_service.ipp
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //
-// Copyright (c) 2003-2025 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+// Copyright (c) 2003-2021 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -50,7 +50,7 @@ void io_uring_descriptor_service::construct(
 void io_uring_descriptor_service::move_construct(
     io_uring_descriptor_service::implementation_type& impl,
     io_uring_descriptor_service::implementation_type& other_impl)
-  noexcept
+  ASIO_NOEXCEPT
 {
   impl.descriptor_ = other_impl.descriptor_;
   other_impl.descriptor_ = -1;
@@ -101,7 +101,6 @@ asio::error_code io_uring_descriptor_service::assign(
   if (is_open(impl))
   {
     ec = asio::error::already_open;
-    ASIO_ERROR_LOCATION(ec);
     return ec;
   }
 
@@ -138,7 +137,6 @@ asio::error_code io_uring_descriptor_service::close(
   //   http://lkml.org/lkml/2005/9/10/129
   construct(impl);
 
-  ASIO_ERROR_LOCATION(ec);
   return ec;
 }
 
@@ -168,7 +166,6 @@ asio::error_code io_uring_descriptor_service::cancel(
   if (!is_open(impl))
   {
     ec = asio::error::bad_descriptor;
-    ASIO_ERROR_LOCATION(ec);
     return ec;
   }
 
