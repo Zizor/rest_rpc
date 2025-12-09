@@ -156,7 +156,11 @@ private:
   std::error_code listen() {
     using asio::ip::tcp;
     asio::error_code ec;
+#if ASIO_VERSION >= 101300
     asio::ip::tcp::resolver resolver(acceptor_.get_executor());
+#else
+    asio::ip::tcp::resolver resolver(acceptor_.get_io_service());
+#endif
     auto endpoints = resolver.resolve(address_, port_, ec);
     if (ec) {
       return ec;
