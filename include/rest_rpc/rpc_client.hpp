@@ -533,7 +533,7 @@ private:
           return;
         }
       } else {
-        std::cout << ec.message() << "\n";
+        // std::cout << ec.message() << "\n";
 
         {
           std::unique_lock<std::mutex> lock(cb_mtx_);

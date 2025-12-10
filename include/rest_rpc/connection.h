@@ -387,6 +387,9 @@ private:
       }
 
       // LOG(INFO) << "rpc connection timeout";
+      if (on_net_err_) {
+        (*on_net_err_)(self, "rpc connection timeout");
+      }
       close(false);
     });
   }
