@@ -140,13 +140,15 @@ private:
         if (on_net_err_callback_) {
           conn_->on_network_error(on_net_err_callback_);
         }
-        conn_->start();
-        std::unique_lock<std::mutex> lock(mtx_);
-        conn_->set_conn_id(conn_id_);
-        connections_.emplace(conn_id_++, conn_);
-        if (on_connected_callback_) {
-          on_connected_callback_(conn_);
+        {
+          std::unique_lock<std::mutex> lock(mtx_);
+          conn_->set_conn_id(conn_id_);
+          connections_.emplace(conn_id_++, conn_);
+          if (on_connected_callback_) {
+            on_connected_callback_(conn_);
+          }
         }
+        conn_->start();
       }
 
       do_accept();
