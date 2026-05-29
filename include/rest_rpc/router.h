@@ -7,7 +7,9 @@
 #include "meta_util.hpp"
 #include "string_view.hpp"
 #include "use_asio.hpp"
+#include "Utility/cpputility.h"
 #include <functional>
+#include <iostream>
 #include <string>
 #include <unordered_map>
 
@@ -136,6 +138,7 @@ private:
       F(std::weak_ptr<connection>, Args...)>::type>::value>::type
   call(const F &f, std::weak_ptr<connection> ptr, std::string &result,
        std::tuple<Args...> tp) {
+    std::cerr << "[rpc-server] return type: void\n";
     call_helper(f, nonstd::make_index_sequence<sizeof...(Args)>{},
                 std::move(tp), ptr);
     result = msgpack_codec::pack_args_str(result_code::OK);
@@ -146,6 +149,10 @@ private:
       F(std::weak_ptr<connection>, Args...)>::type>::value>::type
   call(const F &f, std::weak_ptr<connection> ptr, std::string &result,
        std::tuple<Args...> tp) {
+    using return_type =
+        typename std::result_of<F(std::weak_ptr<connection>, Args...)>::type;
+    std::cerr << "[rpc-server] return type: "
+              << DebugTypeName<return_type>() << '\n';
     auto r = call_helper(f, nonstd::make_index_sequence<sizeof...(Args)>{},
                          std::move(tp), ptr);
     msgpack_codec codec;
@@ -168,6 +175,7 @@ private:
       F(Self, std::weak_ptr<connection>, Args...)>::type>::value>::type
   call_member(const F &f, Self *self, std::weak_ptr<connection> ptr,
               std::string &result, std::tuple<Args...> tp) {
+    std::cerr << "[rpc-server] return type: void\n";
     call_member_helper(f, self,
                        typename nonstd::make_index_sequence<sizeof...(Args)>{},
                        std::move(tp), ptr);
@@ -179,6 +187,10 @@ private:
       F(Self, std::weak_ptr<connection>, Args...)>::type>::value>::type
   call_member(const F &f, Self *self, std::weak_ptr<connection> ptr,
               std::string &result, std::tuple<Args...> tp) {
+    using return_type =
+        typename std::result_of<F(Self, std::weak_ptr<connection>, Args...)>::type;
+    std::cerr << "[rpc-server] return type: "
+              << DebugTypeName<return_type>() << '\n';
     auto r = call_member_helper(
         f, self, typename nonstd::make_index_sequence<sizeof...(Args)>{},
         std::move(tp), ptr);
@@ -187,18 +199,30 @@ private:
 
   template <bool is_pub, typename Function>
   void register_nonmember_func(uint32_t key, Function f) {
-    this->map_invokers_[key] = [f](std::weak_ptr<connection> conn,
-                                   nonstd::string_view str,
-                                   std::string &result) {
+    this->map_invokers_[key] = [this, f, key](std::weak_ptr<connection> conn,
+                                              nonstd::string_view str,
+                                              std::string &result) {
       using args_tuple = typename function_traits<Function>::bare_tuple_type;
       msgpack_codec codec;
+      const std::string handler_name = this->get_name_by_key(key);
       try {
+        std::cerr << "[rpc-server] handler=" << handler_name
+                  << ", expected args tuple type="
+                  << DebugTypeName<args_tuple>()
+                  << ", payload bytes=" << str.size() << '\n';
         auto tp = codec.unpack<args_tuple>(str.data(), str.size());
         helper_t<args_tuple, is_pub>{tp}();
         call(f, conn, result, std::move(tp));
       } catch (std::invalid_argument &e) {
+        std::cerr << "[rpc-server] handler=" << handler_name
+                  << ", unpack failed for args tuple type="
+                  << DebugTypeName<args_tuple>()
+                  << ", payload bytes=" << str.size()
+                  << ", error=" << e.what() << '\n';
         result = codec.pack_args_str(result_code::FAIL, e.what());
       } catch (const std::exception &e) {
+        std::cerr << "[rpc-server] handler=" << handler_name
+                  << ", exception=" << e.what() << '\n';
         result = codec.pack_args_str(result_code::FAIL, e.what());
       }
     };
@@ -206,18 +230,30 @@ private:
 
   template <bool is_pub, typename Function, typename Self>
   void register_member_func(uint32_t key, const Function &f, Self *self) {
-    this->map_invokers_[key] = [f, self](std::weak_ptr<connection> conn,
-                                         nonstd::string_view str,
-                                         std::string &result) {
+    this->map_invokers_[key] = [this, f, self, key](std::weak_ptr<connection> conn,
+                                                    nonstd::string_view str,
+                                                    std::string &result) {
       using args_tuple = typename function_traits<Function>::bare_tuple_type;
       msgpack_codec codec;
+      const std::string handler_name = this->get_name_by_key(key);
       try {
+        std::cerr << "[rpc-server] handler=" << handler_name
+                  << ", expected args tuple type="
+                  << DebugTypeName<args_tuple>()
+                  << ", payload bytes=" << str.size() << '\n';
         auto tp = codec.unpack<args_tuple>(str.data(), str.size());
         helper_t<args_tuple, is_pub>{tp}();
         call_member(f, self, conn, result, std::move(tp));
       } catch (std::invalid_argument &e) {
+        std::cerr << "[rpc-server] handler=" << handler_name
+                  << ", unpack failed for args tuple type="
+                  << DebugTypeName<args_tuple>()
+                  << ", payload bytes=" << str.size()
+                  << ", error=" << e.what() << '\n';
         result = codec.pack_args_str(result_code::FAIL, e.what());
       } catch (const std::exception &e) {
+        std::cerr << "[rpc-server] handler=" << handler_name
+                  << ", exception=" << e.what() << '\n';
         result = codec.pack_args_str(result_code::FAIL, e.what());
       }
     };
