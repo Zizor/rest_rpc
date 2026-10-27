@@ -8,6 +8,7 @@ include_directories(
 
 add_executable(${project_name}
 		test_rest_rpc.cpp
+		test_server_race.cpp
         main.cpp
         )
 
