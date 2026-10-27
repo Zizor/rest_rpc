@@ -7,6 +7,7 @@
 #include "router.h"
 #include "use_asio.hpp"
 #include <array>
+#include <atomic>
 #include <deque>
 #include <iostream>
 #include <memory>
@@ -433,7 +434,8 @@ private:
   asio::steady_timer timer_;
   std::size_t timeout_seconds_;
   int64_t conn_id_ = 0;
-  bool has_closed_;
+  // Written by close() and read by the server's clean() thread.
+  std::atomic<bool> has_closed_;
 
   std::deque<message_type> write_queue_;
   std::function<void(std::string, std::string, std::weak_ptr<connection>)>

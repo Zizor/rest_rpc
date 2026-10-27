@@ -204,9 +204,12 @@ private:
   }
 
   void clean() {
+    // stop_check_ is read only under mtx_; the predicate keeps a stop()
+    // that notifies before the wait from being missed.
+    std::unique_lock<std::mutex> lock(mtx_);
     while (!stop_check_) {
-      std::unique_lock<std::mutex> lock(mtx_);
-      cv_.wait_for(lock, std::chrono::seconds(check_seconds_));
+      cv_.wait_for(lock, std::chrono::seconds(check_seconds_),
+                   [this] { return stop_check_; });
 
       for (auto it = connections_.cbegin(); it != connections_.cend();) {
         if (it->second->has_closed()) {
@@ -222,9 +225,11 @@ private:
   }
 
   void clean_sub_pub() {
+    // Same as clean(), with sub_mtx_ and stop_check_pub_sub_.
+    std::unique_lock<std::mutex> lock(sub_mtx_);
     while (!stop_check_pub_sub_) {
-      std::unique_lock<std::mutex> lock(sub_mtx_);
-      sub_cv_.wait_for(lock, std::chrono::seconds(10));
+      sub_cv_.wait_for(lock, std::chrono::seconds(10),
+                       [this] { return stop_check_pub_sub_; });
 
       for (auto it = sub_map_.cbegin(); it != sub_map_.cend();) {
         auto conn = it->second.lock();
