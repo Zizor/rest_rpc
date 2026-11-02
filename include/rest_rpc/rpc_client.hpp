@@ -187,23 +187,13 @@ public:
   }
 
   void close(bool close_ssl = true) {
-    asio::error_code ec;
-    if (close_ssl) {
-#ifdef CINATRA_ENABLE_SSL
-      if (ssl_stream_) {
-        ssl_stream_->shutdown(ec);
-        ssl_stream_ = nullptr;
-      }
-#endif
-    }
+    close_ssl_stream(close_ssl);
 
     if (!has_connected_)
       return;
 
     has_connected_ = false;
-    socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
-    socket_.close(ec);
-    clear_cache();
+    close_socket();
   }
 
   void set_error_callback(std::function<void(asio::error_code)> f) {
@@ -455,9 +445,11 @@ private:
 
   void write(std::uint64_t req_id, request_type type,
              rpc_service::buffer_type &&message, uint32_t func_id) {
-    size_t size = message.size();
-    assert(size < MAX_BUF_LEN);
-    client_message_type msg{req_id, type, {message.release(), size}, func_id};
+    assert(message.size() < MAX_BUF_LEN);
+    auto msg = std::make_shared<client_message_type>(client_message_type{
+        {MAGIC_NUM, type, static_cast<uint32_t>(message.size()), req_id,
+         func_id},
+        std::move(message)});
 
     std::unique_lock<std::mutex> lock(write_mtx_);
     outbox_.emplace_back(std::move(msg));
@@ -469,37 +461,37 @@ private:
     write();
   }
 
+  // Called with write_mtx_ held. The completion handler holds the message,
+  // and with it both buffers, until the write completes.
   void write() {
-    auto &msg = outbox_[0];
-    write_size_ = (uint32_t)msg.content.length();
+    auto msg = outbox_.front();
     std::array<asio::const_buffer, 2> write_buffers;
-    header_ = {MAGIC_NUM, msg.req_type, write_size_, msg.req_id, msg.func_id};
-    write_buffers[0] = asio::buffer(&header_, sizeof(rpc_header));
-    write_buffers[1] = asio::buffer((char *)msg.content.data(), write_size_);
+    write_buffers[0] = asio::buffer(&msg->header, sizeof(rpc_header));
+    write_buffers[1] = asio::buffer(msg->content.data(), msg->content.size());
 
-    async_write(write_buffers,
-                [this](const asio::error_code &ec, const size_t length) {
-                  if (ec) {
-                    has_connected_ = false;
-                    close(false);
-                    error_callback(ec);
+    async_write(write_buffers, [this, msg](const asio::error_code &ec,
+                                           const size_t length) {
+      {
+        std::unique_lock<std::mutex> lock(write_mtx_);
+        // close() has already dropped the queue this message belonged to
+        if (outbox_.empty() || outbox_.front() != msg) {
+          return;
+        }
 
-                    return;
-                  }
+        if (!ec) {
+          outbox_.pop_front();
+          if (!outbox_.empty()) {
+            // more messages to send
+            this->write();
+          }
+          return;
+        }
+      }
 
-                  std::unique_lock<std::mutex> lock(write_mtx_);
-                  if (outbox_.empty()) {
-                    return;
-                  }
-
-                  ::free((char *)outbox_.front().content.data());
-                  outbox_.pop_front();
-
-                  if (!outbox_.empty()) {
-                    // more messages to send
-                    this->write();
-                  }
-                });
+      has_connected_ = false;
+      close_socket();
+      error_callback(ec);
+    });
   }
 
   void do_read() {
@@ -576,7 +568,8 @@ private:
         // LOG(INFO) << ec.message();
         has_connected_ = false;
         call_back(req_id, ec, {});
-        close();
+        close_ssl_stream(true);
+        close_socket();
         error_callback(ec);
       }
     });
@@ -672,13 +665,30 @@ private:
     }
   }
 
+  void close_ssl_stream(bool close_ssl) {
+    if (!close_ssl)
+      return;
+#ifdef CINATRA_ENABLE_SSL
+    if (ssl_stream_) {
+      asio::error_code ec;
+      ssl_stream_->shutdown(ec);
+      ssl_stream_ = nullptr;
+    }
+#endif
+  }
+
+  // Shuts the socket down and drops the queued messages and pending callbacks.
+  void close_socket() {
+    asio::error_code ec;
+    socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+    socket_.close(ec);
+    clear_cache();
+  }
+
   void clear_cache() {
     {
       std::unique_lock<std::mutex> lock(write_mtx_);
-      while (!outbox_.empty()) {
-        ::free((char *)outbox_.front().content.data());
-        outbox_.pop_front();
-      }
+      outbox_.clear();
     }
 
     {
@@ -860,13 +870,10 @@ private:
   bool stop_client_ = false;
 
   struct client_message_type {
-    std::uint64_t req_id;
-    request_type req_type;
-    string_view content;
-    uint32_t func_id;
+    rpc_header header;
+    rpc_service::buffer_type content;
   };
-  std::deque<client_message_type> outbox_;
-  uint32_t write_size_ = 0;
+  std::deque<std::shared_ptr<client_message_type>> outbox_;
   std::mutex write_mtx_;
   uint64_t fu_id_ = 0;
   std::function<void(asio::error_code)> err_cb_;
@@ -883,7 +890,6 @@ private:
   char head_[HEAD_LEN] = {};
   std::vector<char> body_;
 
-  rpc_header header_;
 
   std::unordered_map<std::string, std::function<void(string_view)>> sub_map_;
   std::set<std::pair<std::string, std::string>> key_token_set_;

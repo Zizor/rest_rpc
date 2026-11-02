@@ -9,6 +9,7 @@ include_directories(
 add_executable(${project_name}
 		test_rest_rpc.cpp
 		test_server_race.cpp
+		test_client_error_close.cpp
         main.cpp
         )
 
