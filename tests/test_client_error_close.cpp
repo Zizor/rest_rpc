@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <rest_rpc.hpp>
@@ -31,6 +32,17 @@ bool wait_until(const std::function<bool()> &done,
 }
 
 int add(rpc_conn, int a, int b) { return a + b; }
+
+// The largest send buffer that Linux grants a TCP socket (tcp_wmem maximum),
+// or 0 when it cannot be read.
+size_t tcp_send_buffer_max() {
+  std::ifstream file("/proc/sys/net/ipv4/tcp_wmem");
+  size_t min = 0, def = 0, max = 0;
+  if (!(file >> min >> def >> max)) {
+    return 0;
+  }
+  return max;
+}
 
 // A peer that speaks the wire format by hand. All waits are bounded.
 class fake_server {
@@ -171,15 +183,24 @@ TEST_SUITE("client_error_close") {
 
   TEST_CASE("body_read_error_with_writes_in_flight_then_reconnect") {
     // The first big message cannot fit into the client's send buffer
-    // (tcp_wmem maximum 4 MiB by default) plus the server's small receive
+    // (tcp_wmem maximum, 4 MiB by default) plus the server's small receive
     // buffer, so its write stays in progress while the server does not read,
     // and the second big message waits in the queue.
     const std::string big(9 * 1024 * 1024, 'b');
-    fake_server server(64 * 1024);
-    rpc_client client;
+    const int receive_buffer = 64 * 1024;
+    const size_t send_buffer = tcp_send_buffer_max();
+    // The kernel doubles both sizes for its bookkeeping.
+    if (send_buffer == 0 || 2 * (send_buffer + receive_buffer) >= big.size()) {
+      MESSAGE("skipped: tcp_wmem maximum " << send_buffer
+              << " is too large to keep a write in progress");
+      return;
+    }
     // The error callback runs after the client has closed its socket; the
-    // test reconnects only after it, from this thread.
+    // test reconnects only after it, from this thread. Declared before the
+    // client, which may still run the callback while it is destroyed.
     std::atomic<bool> errored{false};
+    fake_server server(receive_buffer);
+    rpc_client client;
     client.set_error_callback([&errored](asio::error_code) { errored = true; });
     client.async_connect("127.0.0.1", server.port());
     REQUIRE(server.accept());
