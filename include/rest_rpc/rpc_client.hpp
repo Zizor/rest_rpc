@@ -569,7 +569,7 @@ private:
         has_connected_ = false;
         call_back(req_id, ec, {});
         close_ssl_stream(true);
-        close_on_error(ec);
+        close_socket();
         error_callback(ec);
       }
     });
@@ -678,9 +678,9 @@ private:
     clear_cache();
   }
 
-  // Called on the io thread after a read or write error: as close_socket(),
-  // then reports ec to the callbacks that were pending. They run without
-  // cb_mtx_ held, so that they may start new calls.
+  // Called on the io thread after a write error: as close_socket(), then
+  // reports ec to the callbacks that were pending, as a head read error does.
+  // They run without cb_mtx_ held, so that they may start new calls.
   void close_on_error(const asio::error_code &ec) {
     decltype(callback_map_) callbacks;
     {

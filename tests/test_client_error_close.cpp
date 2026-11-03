@@ -14,8 +14,8 @@ using namespace rest_rpc;
 using namespace rpc_service;
 
 // The client's read and write errors: it closes the connection, drops what it
-// has queued, reports the error to the pending callbacks and ignores answers
-// and completions that belong to requests it no longer knows.
+// has queued, reports a write error to the pending callbacks and ignores
+// answers and completions that belong to requests it no longer knows.
 namespace {
 
 bool wait_until(const std::function<bool()> &done,
@@ -353,25 +353,38 @@ TEST_SUITE("client_error_close") {
     CHECK(pair.client.has_connected());
   }
 
-  // The other requests pending at a body read error get the error as well.
-  TEST_CASE("body_read_error_reports_to_the_other_callbacks") {
+  // At a body read error only the request being read gets the error. The
+  // other pending callbacks are dropped without a call, and the client
+  // releases them.
+  TEST_CASE("body_read_error_drops_the_other_callbacks") {
+    // Declared before the client, which may still run the error callback
+    // while it is destroyed.
+    std::atomic<bool> errored{false};
     connected_pair pair;
+    pair.client.set_error_callback(
+        [&errored](asio::error_code) { errored = true; });
     REQUIRE(pair.connect());
     auto first = async_add(pair.client);
-    auto second = async_add(pair.client);
+    auto second = std::make_shared<call_result>();
+    auto token = std::make_shared<int>(0);
+    std::weak_ptr<int> held = token;
+    // No timeout, so that no timer keeps the callback alive.
+    pair.client.async_call<int, 0>(
+        "add", [second, token](asio::error_code, int) { ++second->calls; },
+        1, 2);
+    token.reset();
     rpc_header first_request{}, second_request{};
     REQUIRE(pair.server.read_request(first_request));
     REQUIRE(pair.server.read_request(second_request));
 
     pair.server.reply_partially(first_request, 100, 10);
-    CHECK(wait_until([&first] { return first->done.load(); },
-                     std::chrono::seconds(5)));
+    // The error callback runs after the cleanup.
+    REQUIRE(wait_until([&errored] { return errored.load(); },
+                       std::chrono::seconds(5)));
+    CHECK(first->calls == 1);
     CHECK(first->failed);
-    CHECK(wait_until([&second] { return second->done.load(); },
-                     std::chrono::seconds(5)));
-    CHECK(second->failed);
-    CHECK(second->calls == 1);
-    CHECK_FALSE(second->connected_in_callback);
+    CHECK(second->calls == 0);
+    CHECK(held.expired());
   }
 
   // The server resets the connection while a write is in progress, and the
