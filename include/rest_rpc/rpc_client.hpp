@@ -489,7 +489,7 @@ private:
       }
 
       has_connected_ = false;
-      close_socket();
+      close_on_error(ec);
       error_callback(ec);
     });
   }
@@ -569,7 +569,7 @@ private:
         has_connected_ = false;
         call_back(req_id, ec, {});
         close_ssl_stream(true);
-        close_socket();
+        close_on_error(ec);
         error_callback(ec);
       }
     });
@@ -603,44 +603,37 @@ private:
       temp_req_id_ = req_id;
       auto cb_flag = req_id >> 63;
       if (cb_flag) {
+        // A request the client no longer knows (dropped when the connection
+        // closed, or answered already) is ignored.
         std::shared_ptr<call_t> cl = nullptr;
         {
           std::unique_lock<std::mutex> lock(cb_mtx_);
-          if (callback_map_.empty()) {
+          auto it = callback_map_.find(req_id);
+          if (it == callback_map_.end()) {
             return;
           }
-          cl = std::move(callback_map_[req_id]);
+          cl = std::move(it->second);
+          callback_map_.erase(it);
         }
 
-        assert(cl);
         if (!cl->has_timeout()) {
           cl->cancel();
           cl->callback(ec, data);
         } else {
           cl->callback(make_error_code(rpc_errc::request_timeout), {});
         }
-
-        std::unique_lock<std::mutex> lock(cb_mtx_);
-        callback_map_.erase(req_id);
       } else {
         std::unique_lock<std::mutex> lock(cb_mtx_);
-        if (future_map_.empty()) {
+        auto it = future_map_.find(req_id);
+        if (it == future_map_.end()) {
           return;
         }
-        auto &f = future_map_[req_id];
         if (ec) {
-          // LOG<<ec.message();
-          if (f) {
-            // std::cout << "invalid req_id" << std::endl;
-            f->set_value(req_result{""});
-            future_map_.erase(req_id);
-            return;
-          }
+          it->second->set_value(req_result{""});
+        } else {
+          it->second->set_value(req_result{data});
         }
-
-        assert(f);
-        f->set_value(req_result{data});
-        future_map_.erase(req_id);
+        future_map_.erase(it);
       }
     }
   }
@@ -683,6 +676,23 @@ private:
     socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
     socket_.close(ec);
     clear_cache();
+  }
+
+  // Called on the io thread after a read or write error: as close_socket(),
+  // then reports ec to the callbacks that were pending. They run without
+  // cb_mtx_ held, so that they may start new calls.
+  void close_on_error(const asio::error_code &ec) {
+    decltype(callback_map_) callbacks;
+    {
+      std::unique_lock<std::mutex> lock(cb_mtx_);
+      callbacks.swap(callback_map_);
+    }
+    close_socket();
+    for (auto &item : callbacks) {
+      temp_req_id_ = item.first;
+      item.second->cancel();
+      item.second->callback(ec, {});
+    }
   }
 
   void clear_cache() {
